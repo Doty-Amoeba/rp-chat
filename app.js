@@ -944,55 +944,133 @@ $('btnPromptEn').onclick = () => { $('sPrompt').value = PROMPT_EN; };
 $('btnPromptRu').onclick = () => { $('sPrompt').value = PROMPT_RU; };
 $('btnPromptReset').onclick = () => { $('sPrompt').value = PROMPT_EN; };
 
-/* ============================ ПЕРЕНОС ДАННЫХ ============================ */
-/* Всё лежит в localStorage: у ПК и телефона свои копии. Эти кнопки
-   позволяют перекинуть персонажей и чаты с одного устройства на другое. */
+/* ============================ СЕССИЯ ============================ */
+/* Один файл со всем: персонажи, вся переписка, настройки и то,
+   где пользователь остановился. Загрузил — и продолжаешь. */
 
-function exportAll() {
-  const data = {
+function buildSession(includeKey) {
+  const st = Object.assign({}, settings);
+  if (!includeKey) delete st.key;
+
+  return {
     app: 'rp-chat',
-    v: 1,
+    v: 2,
     at: new Date().toISOString(),
-    chars: load(LS.chars, []),
-    chats: load(LS.chats, {}),
-    settings: load(LS.settings, {})
+    chars: chars,
+    chats: chats,
+    settings: st,
+    // где остановился — чтобы открыть сразу тот же чат
+    current: currentChar ? currentChar.id : null
   };
-  // ключ в файл не кладём — его безопаснее ввести заново на каждом устройстве
-  if (data.settings) delete data.settings.key;
-
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'rp-chat-' + new Date().toISOString().slice(0, 10) + '.json';
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 3000);
 }
 
-function importAll(file) {
+function saveSession() {
+  try {
+    const includeKey = $('sExportKey') ? $('sExportKey').checked : false;
+    const data = buildSession(includeKey);
+
+    const size = JSON.stringify(data).length;
+    const charsN = data.chars.length;
+    const msgsN = Object.values(data.chats || {}).reduce((a, l) => a + (l ? l.length : 0), 0);
+
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const d = new Date();
+    const stamp = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' +
+                  String(d.getDate()).padStart(2, '0') + '_' + String(d.getHours()).padStart(2, '0') + '-' +
+                  String(d.getMinutes()).padStart(2, '0');
+
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'rp-chat-' + stamp + '.json';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+
+    // короткая вспышка на иконке, чтобы было видно: сохранилось
+    const b = $('btnSaveSession');
+    if (b) {
+      b.classList.add('saving');
+      b.textContent = '✓';
+      setTimeout(() => { b.classList.remove('saving'); b.textContent = '💾'; }, 1100);
+    }
+
+    return { charsN, msgsN, size, includeKey };
+  } catch (e) {
+    alert('Не смог собрать файл: ' + e.message);
+    return null;
+  }
+}
+
+function loadSession(file) {
   const r = new FileReader();
   r.onload = () => {
     let d;
     try { d = JSON.parse(r.result); }
-    catch { alert('Не смог прочитать файл — это не JSON.'); return; }
-    if (!d || !Array.isArray(d.chars)) { alert('Это не файл RP Chat.'); return; }
+    catch { alert('Не смог прочитать файл — он повреждён или это не JSON.'); return; }
 
-    const nc = d.chars.length, nch = Object.keys(d.chats || {}).length;
-    if (!confirm(`В файле: ${nc} персонажей, ${nch} чатов.\n\nЗаменить то, что есть сейчас на этом устройстве?`)) return;
+    if (!d || !Array.isArray(d.chars)) { alert('Это не файл сессии RP Chat.'); return; }
+
+    const nChars = d.chars.length;
+    const nChats = Object.keys(d.chats || {}).length;
+    const nMsgs = Object.values(d.chats || {}).reduce((a, l) => a + (l ? l.length : 0), 0);
+    const hasKey = !!(d.settings && d.settings.key);
+
+    const txt =
+      'В файле:\n' +
+      '• персонажей: ' + nChars + '\n' +
+      '• чатов: ' + nChats + ' (' + nMsgs + ' сообщений)\n' +
+      '• API-ключ: ' + (hasKey ? 'есть' : 'нет') + '\n\n' +
+      'ВНИМАНИЕ: то, что сейчас на этом устройстве, будет заменено.\nПродолжить?';
+
+    if (!confirm(txt)) return;
+
+    // страхуемся: перед заменой сохраним текущее состояние в отдельный ключ
+    try {
+      save('rp.backup', {
+        at: new Date().toISOString(),
+        chars: load(LS.chars, []),
+        chats: load(LS.chats, {}),
+        settings: load(LS.settings, {})
+      });
+    } catch (e) { /* место кончилось — не критично */ }
 
     save(LS.chars, d.chars);
     save(LS.chats, d.chats || {});
-    if (d.settings) save(LS.settings, d.settings);   // ключа там нет — останется свой
-    alert('Готово! Сейчас перезагружу страницу.');
+
+    if (d.settings) {
+      const merged = Object.assign({}, DEFAULT_SETTINGS, d.settings);
+      // если в файле ключа не было — не затираем свой
+      if (!merged.key && settings.key) merged.key = settings.key;
+      save(LS.settings, merged);
+    }
+
+    // вернёмся туда, где остановились
+    if (d.current) save('rp.current', d.current);
+
+    alert('Сессия загружена! Сейчас перезагружу страницу.');
     location.reload();
   };
   r.readAsText(file);
 }
 
-$('btnExport').onclick = exportAll;
+$('btnSaveSession').onclick = () => {
+  const r = saveSession();
+  if (r) {
+    topSub.textContent = 'сохранено ✓';
+    setTimeout(() => { topSub.textContent = chars.length ? chars.length + ' шт.' : ''; }, 2200);
+  }
+};
+
+$('btnExport').onclick = () => {
+  const r = saveSession();
+  if (r) alert('Готово!\n\nПерсонажей: ' + r.charsN + '\nСообщений: ' + r.msgsN +
+               '\nКлюч в файле: ' + (r.includeKey ? 'да' : 'нет') +
+               '\n\nФайл лежит в папке «Загрузки».');
+};
+
 $('btnImport').onclick = () => $('fileImport').click();
 $('fileImport').onchange = e => {
   const f = e.target.files && e.target.files[0];
-  if (f) importAll(f);
+  if (f) loadSession(f);
   e.target.value = '';
 };
 
@@ -1010,6 +1088,17 @@ $('btnClearChat').onclick = () => {
 
 renderGallery();
 topSub.textContent = chars.length ? chars.length + ' шт.' : '';
+
+// вернуться в тот чат, где остановился (после загрузки сессии)
+const resumeId = load('rp.current', null);
+if (resumeId) {
+  const rc = chars.find(c => c.id === resumeId);
+  if (rc) {
+    openChat(rc);
+  }
+  // отметка одноразовая: дальше открывается галерея
+  localStorage.removeItem('rp.current');
+}
 
 // подсказка про ключ при первом запуске
 if (!settings.key && !load(LS.seen, false)) {

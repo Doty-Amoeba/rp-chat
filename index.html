@@ -58,6 +58,7 @@
     background:var(--panel2); border:1px solid var(--line); font-size:15px;
     transition:.15s; flex:0 0 auto;
   }
+  .icon.saving{background:rgba(167,139,250,.18); border-color:var(--accent); color:var(--accent)}
   .icon:hover{background:#2a3044; border-color:#3a4260}
   .hidden{display:none !important}
 
@@ -403,6 +404,7 @@
   <span id="topSub"></span>
   <div class="spacer"></div>
   <button id="btnSelect" class="icon hidden" title="Удалить сообщения">☑</button>
+  <button id="btnSaveSession" class="icon" title="Сохранить сессию в файл">💾</button>
   <button id="btnRedo" class="icon hidden" title="Сгенерировать заново">⟳</button>
   <button id="btnRestart" class="icon hidden" title="Начать чат заново">↻</button>
   <button id="btnSettings" class="icon" title="Настройки">⚙</button>
@@ -554,12 +556,17 @@
     </div>
     <div class="hintline">{{char}} заменяется на имя персонажа, {{user}} — на твоё имя из настроек. Ниже этого блока сайт сам добавляет карточку персонажа.</div>
 
-    <div class="sect">Перенос на другое устройство</div>
-    <div class="hintline" style="margin-top:0">Персонажи и чаты хранятся в браузере. Чтобы открыть их на телефоне — выгрузи файл на ПК и загрузи его там. Ключ в файл не попадает.</div>
+    <div class="sect">Сохранить сессию</div>
+    <div class="hintline" style="margin-top:0">Один файл: персонажи, вся переписка, настройки и место, где ты остановился. Потом загружаешь его в любом браузере — и продолжаешь с того же места.</div>
     <div style="display:flex;gap:8px">
-      <button class="btn ghost" id="btnExport" style="padding:8px 12px;font-size:12.5px;flex:1">Выгрузить файл</button>
-      <button class="btn ghost" id="btnImport" style="padding:8px 12px;font-size:12.5px;flex:1">Загрузить файл</button>
+      <button class="btn" id="btnExport" style="padding:10px 12px;font-size:13px;flex:1">Сохранить в файл</button>
+      <button class="btn ghost" id="btnImport" style="padding:10px 12px;font-size:13px;flex:1">Загрузить файл</button>
     </div>
+    <label style="display:flex;gap:9px;align-items:center;font-size:12.5px;color:var(--muted);cursor:pointer;margin-top:2px">
+      <input id="sExportKey" type="checkbox" style="width:16px;height:16px;accent-color:#a78bfa">
+      Класть в файл и API-ключ
+    </label>
+    <div class="hintline" style="margin-top:-6px">Без галочки ключ остаётся только в браузере — файл можно спокойно носить на флешке. С галочкой на новом устройстве ничего вводить не придётся.</div>
     <input id="fileImport" type="file" accept="application/json,.json" class="hidden">
 
     <div class="actions" style="padding-bottom:8px">
