@@ -265,6 +265,82 @@
     display:flex; flex-direction:column; gap:14px;
     -webkit-overflow-scrolling:touch; overscroll-behavior:contain; min-height:0;
   }
+
+  /* ---- вкладки настроек ---- */
+  .tabs{
+    display:flex; gap:6px; padding:10px 12px; border-bottom:1px solid var(--line);
+    flex:0 0 auto; background:rgba(15,17,23,.5);
+  }
+  .tab{
+    flex:1; padding:9px 10px; border-radius:10px; font-size:13px; font-weight:600;
+    background:transparent; border:1px solid transparent; color:var(--muted);
+    transition:.15s; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .tab:hover{color:var(--text); background:var(--panel2)}
+  .tab.active{
+    background:var(--panel2); border-color:var(--line); color:var(--accent);
+  }
+  .tabpage{display:flex; flex-direction:column; gap:14px}
+  .tabpage.hidden{display:none !important}
+
+  /* ---- кастомные галочки ---- */
+  .chkrow{
+    display:flex; align-items:flex-start; gap:9px; font-size:13px; color:var(--muted);
+    cursor:pointer; line-height:1.4;
+  }
+  .chkrow input{width:16px; height:16px; accent-color:#a78bfa; flex:0 0 auto; margin-top:1px}
+
+  /* ---- список персонажей для своего промта ---- */
+  .ovitem{
+    padding:9px 12px; border-radius:10px; border:1px solid var(--line);
+    background:var(--panel); font-size:12.5px; margin-bottom:6px; cursor:pointer;
+    display:flex; align-items:center; gap:8px; transition:.15s;
+  }
+  .ovitem:hover{border-color:#4b5474}
+  .ovitem.on{border-color:var(--accent); background:rgba(167,139,250,.1); color:var(--accent)}
+  .ovitem .dot{width:6px; height:6px; border-radius:50%; background:var(--accent2); flex:0 0 auto}
+  .ovitem span{flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+
+  /* ---- индикатор загрузки в чате ---- */
+  .loading{display:flex; align-items:center; gap:9px; color:var(--muted); font-size:13px}
+  .loading .dots{display:flex; gap:4px}
+  .loading .dots i{
+    width:6px; height:6px; border-radius:50%; background:var(--accent);
+    animation:blink 1.2s infinite ease-in-out;
+  }
+  .loading .dots i:nth-child(2){animation-delay:.18s}
+  .loading .dots i:nth-child(3){animation-delay:.36s}
+  @keyframes blink{
+    0%,80%,100%{opacity:.22; transform:scale(.85)}
+    40%{opacity:1; transform:scale(1)}
+  }
+
+  /* ---- аватар персонажа в шапке чата ---- */
+  #topAva{
+    width:36px; height:36px; border-radius:10px; flex:0 0 auto; overflow:hidden;
+    background:linear-gradient(135deg,#2a2140,#1b2233); display:grid; place-items:center;
+    font-size:15px; color:#666f8f; cursor:pointer; border:1px solid var(--line);
+    transition:.15s; margin-right:2px;
+  }
+  #topAva:hover{border-color:var(--accent); transform:scale(1.06)}
+  #topAva img{width:100%; height:100%; object-fit:cover}
+
+  /* ---- просмотр аватарки крупно ---- */
+  #avaView{
+    position:fixed; inset:0; z-index:70; background:rgba(6,7,12,.86);
+    display:grid; place-items:center; padding:24px; cursor:zoom-out;
+    opacity:0; pointer-events:none; transition:.18s;
+    backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px);
+  }
+  #avaView.on{opacity:1; pointer-events:auto}
+  #avaView img{
+    max-width:min(520px, 90vw); max-height:82vh; border-radius:20px;
+    box-shadow:0 24px 70px rgba(0,0,0,.7); border:1px solid var(--line);
+  }
+  #avaView .cap{
+    position:absolute; bottom:max(28px, env(safe-area-inset-bottom,0px));
+    font-size:13px; color:var(--muted);
+  }
   .sect{font-size:11px; text-transform:uppercase; letter-spacing:.09em; color:var(--muted); margin-top:6px}
   .hintline{font-size:11.5px; color:var(--muted); line-height:1.45; margin-top:-4px}
   .grid2{display:grid; grid-template-columns:1fr 1fr; gap:10px}
@@ -403,6 +479,7 @@
   <h1 id="topTitle">Персонажи</h1>
   <span id="topSub"></span>
   <div class="spacer"></div>
+  <button id="topAva" class="hidden" title="Аватар персонажа"></button>
   <button id="btnSelect" class="icon hidden" title="Удалить сообщения">☑</button>
   <button id="btnSaveSession" class="icon" title="Сохранить сессию в файл">💾</button>
   <button id="btnRedo" class="icon hidden" title="Сгенерировать заново">⟳</button>
@@ -479,13 +556,26 @@
 
 <div id="veil"></div>
 
+<!-- ======= ПРОСМОТР АВАТАРКИ ======= -->
+<div id="avaView">
+  <img id="avaViewImg" alt="">
+  <div class="cap" id="avaViewCap"></div>
+</div>
+
 <!-- ======= НАСТРОЙКИ ======= -->
 <div id="settingsPanel" class="drawer">
   <header>
     <span style="flex:1">Настройки</span>
     <button id="btnCloseSettings" class="icon">✕</button>
   </header>
-  <div class="scroll">
+
+  <div class="tabs">
+    <button class="tab active" id="tabTech" data-tab="tech">⚙ Система</button>
+    <button class="tab" id="tabProfile" data-tab="profile">👤 Профиль</button>
+  </div>
+
+  <!-- ================= СИСТЕМНЫЕ ================= -->
+  <div class="scroll tabpage" id="pageTech">
     <div class="sect">Подключение</div>
     <div class="field">
       <label>API-ключ RouterAI</label>
@@ -525,10 +615,6 @@
       Отправлять только базовые сэмплеры
     </label>
     <div class="hintline" style="margin-top:-8px">Включай, если у модели ошибка 400 на параметры — отправятся только temperature, top_p и max_tokens.</div>
-    <div class="field">
-      <label>Твоё имя в истории</label>
-      <input id="sUser" type="text" maxlength="40">
-    </div>
 
     <div class="sect">Сэмплеры (для Euryale)</div>
     <div class="grid2">
@@ -574,6 +660,49 @@
     </div>
     <div class="actions" style="padding:0 0 8px">
       <button id="btnClearChat" class="btn ghost" style="font-size:12.5px">Очистить чат с текущим персонажем</button>
+    </div>
+  </div>
+
+  <!-- ================= ПРОФИЛЬ ================= -->
+  <div class="scroll tabpage hidden" id="pageProfile">
+    <div class="sect">Как зовут тебя в истории</div>
+    <div class="field">
+      <label>Твоё имя</label>
+      <input id="sUser" type="text" maxlength="40" placeholder="Например: Проводов">
+    </div>
+    <div class="hintline" style="margin-top:-6px">Персонаж будет обращаться к тебе именно так. Подставляется вместо <b>{{user}}</b>.</div>
+
+    <div class="sect">Кто ты в истории</div>
+    <div class="field">
+      <label>Описание себя</label>
+      <textarea id="sUserDesc" placeholder="Например: Высокий широкоплечий парень, 20 лет. Тёмные волосы, шрам на брови. Говорю мало, но по делу. Одет в простую серую куртку."></textarea>
+    </div>
+    <div class="hintline" style="margin-top:-6px">Пиши как угодно — внешность, возраст, характер, привычки. Это автоматически добавляется в каждый чат, чтобы персонаж видел тебя таким, какой ты есть.</div>
+
+    <div class="field">
+      <label>Твои дела и обстоятельства (необязательно)</label>
+      <textarea id="sUserExtra" placeholder="Например: Работаю механиком в гараже. Знаю этот город как свои пять пальцев. Денег мало, но руки золотые."></textarea>
+    </div>
+
+    <div class="sect">Аватарка для твоих сообщений</div>
+    <div class="hintline" style="margin-top:0">Если не выберешь — рядом с твоими репликами будет 🙂.</div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <div id="userAvaBox" style="width:56px;height:56px;border-radius:14px;flex:0 0 auto;background:linear-gradient(135deg,#2a2140,#1b2233);border:1px solid var(--line);overflow:hidden;display:grid;place-items:center;font-size:22px;color:#5b6382;cursor:pointer">🙂</div>
+      <button class="btn ghost" id="btnUserAvaPick" style="padding:9px 14px;font-size:12.5px;flex:0 0 auto">Выбрать</button>
+      <button class="btn ghost" id="btnUserAvaClear" style="padding:9px 14px;font-size:12.5px;flex:0 0 auto">Убрать</button>
+    </div>
+    <input id="fileUserAva" type="file" accept="image/*" class="hidden">
+
+    <div class="sect">Свой промт для отдельных персонажей</div>
+    <div class="hintline" style="margin-top:0">Переопределяет описание профиля только в этом чате. Пригодится, если в одной истории ты пират, а в другой — студент.</div>
+    <div id="overrideList"></div>
+    <div class="field" style="margin-top:6px">
+      <label id="ovLabel">Выбери персонажа в списке выше</label>
+      <textarea id="ovText" placeholder="Свой вариант описания себя для этого персонажа…" disabled></textarea>
+    </div>
+
+    <div class="actions" style="padding-bottom:8px">
+      <button id="btnSaveProfile" class="btn">Сохранить профиль</button>
     </div>
   </div>
 </div>
