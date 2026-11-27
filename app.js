@@ -842,6 +842,81 @@ async function sendMessage() {
   await generate();
 }
 
+/* ---------------------- РЕТРАИ ---------------------- */
+/* Провайдер иногда отбивает запрос («high risk») или возвращает пустоту.
+   Это недетерминированно: повтор почти всегда проходит. Раньше приходилось
+   вручную гриндить «Заново» — теперь это делает код. */
+
+const RETRY_MAX = 4;
+const wait = ms => new Promise(r => setTimeout(r, ms));
+
+/** Отказ фильтра провайдера, который имеет смысл повторить. */
+function isRiskReject(txt) {
+  return /high[ _-]?risk|considered high risk|flagged|moderation|content[ _-]?policy|safety/i.test(txt || '');
+}
+
+/** Коды, при которых повтор оправдан. */
+function isRetryableStatus(s) {
+  return s === 408 || s === 409 || s === 425 || s === 429 ||
+         s === 500 || s === 502 || s === 503 || s === 504;
+}
+
+/** Короткая отписка вместо сцены — тоже повод попробовать ещё раз. */
+function isFlatRefusal(txt) {
+  const t = (txt || '').trim();
+  if (!t || t.length > 480) return false;
+  return /(не могу (об этом|про это|это)?\s*(говорить|обсуждать|продолжать|помочь)|извини(те)?,? но я не могу|я не могу помочь|как (ии|искусственный интеллект|языковая модель)|я не имею права|давай(те)? сменим тему|это неуместно|не стану (это|об этом))/i.test(t);
+}
+
+/** Надпись в пузыре: «печатает» или «повторяю (2/4)». */
+function setLoading(holder, attempt) {
+  const body = holder && holder.querySelector('.body');
+  if (!body) return;
+  const label = attempt <= 1 ? 'печатает' : 'повторяю (' + attempt + '/' + RETRY_MAX + ')';
+  body.innerHTML = '<div class="loading"><span>' + label + '</span>' +
+                   '<span class="dots"><i></i><i></i><i></i></span></div>';
+}
+
+/** Тело запроса. На повторах слегка меняем условия — фильтр капризный. */
+function buildPayload(nudge, attempt) {
+  const payload = {
+    model: settings.model,
+    messages: buildMessages(nudge),
+    stream: true
+  };
+
+  let t = num(settings.temperature);
+  if (t === null) t = 0.85;
+  // сдвиг температуры на повторах: тот же запрос иначе пробивает фильтр
+  if (attempt > 1) t = Math.min(t + 0.04 * (attempt - 1), 1.6);
+  payload.temperature = t;
+
+  const tp = num(settings.top_p); if (tp !== null) payload.top_p = tp;
+  const mx = num(settings.max_tokens); if (mx !== null) payload.max_tokens = mx;
+
+  // Расширенные сэмплеры — ТОЛЬКО если их явно включили.
+  if (!settings.basicOnly) {
+    const mp = num(settings.min_p); if (mp !== null && mp > 0) payload.min_p = mp;
+    const rp = num(settings.repetition_penalty); if (rp !== null && rp !== 1) payload.repetition_penalty = rp;
+    const pp = num(settings.presence_penalty); if (pp !== null && pp !== 0) payload.presence_penalty = pp;
+    const fp = num(settings.frequency_penalty); if (fp !== null && fp !== 0) payload.frequency_penalty = fp;
+  }
+
+  // Провайдера фиксируем только на первой попытке: если отбивает именно он,
+  // вторая попытка уйдёт к другому провайдеру.
+  if (settings.provider && attempt === 1) payload.provider = { only: [settings.provider] };
+
+  // Стоп-последовательности: обрубаем попытку продолжить «за пользователя»
+  payload.stop = ['\nuser:', '\nassistant:'];
+
+  // Для ролеплея размышления только вредят: съедают токены и ломают поток.
+  if (settings.reasoning && settings.reasoning !== 'off') {
+    payload.reasoning = { effort: settings.reasoning };
+  }
+
+  return payload;
+}
+
 async function generate(opts) {
   if (!currentChar) return;
 
@@ -856,7 +931,6 @@ async function generate(opts) {
   // загрузки, а когда ответ готов — появляется сразу целый блок.
   const holder = bubble('assistant', '', false, undefined, true);
   messages.appendChild(holder);
-  const bodyEl = holder.querySelector('.body');
 
   // листать чат во время загрузки можно: автоскролл включается,
   // только если пользователь и так внизу
@@ -866,86 +940,111 @@ async function generate(opts) {
   btnSend.classList.add('stop');
   btnSend.textContent = '■';
 
-  const payload = {
-    model: settings.model,
-    messages: buildMessages(nudge),
-    stream: true
-  };
-  const t = num(settings.temperature); if (t !== null) payload.temperature = t;
-  const tp = num(settings.top_p); if (tp !== null) payload.top_p = tp;
-  const mx = num(settings.max_tokens); if (mx !== null) payload.max_tokens = mx;
-
-  // Расширенные сэмплеры — ТОЛЬКО если их явно включили.
-  // repetition_penalty на DeepSeek вызывает срыв в случайные токены,
-  // min_p вместе с top_p двойное фильтрование — тоже во вред.
-  if (!settings.basicOnly) {
-    const mp = num(settings.min_p); if (mp !== null && mp > 0) payload.min_p = mp;
-    const rp = num(settings.repetition_penalty); if (rp !== null && rp !== 1) payload.repetition_penalty = rp;
-    const pp = num(settings.presence_penalty); if (pp !== null && pp !== 0) payload.presence_penalty = pp;
-    const fp = num(settings.frequency_penalty); if (fp !== null && fp !== 0) payload.frequency_penalty = fp;
-  }
-  if (settings.provider) payload.provider = { only: [settings.provider] };
-
-  // Стоп-последовательности: обрубаем попытку продолжить «за пользователя»
-  payload.stop = ['\nuser:', '\nassistant:'];
-
-  // DeepSeek V4 Flash — reasoning-модель. Для ролеплея размышления только вредят:
-  // они съедают токены и ломают живой поток. По умолчанию просим не думать.
-  if (settings.reasoning && settings.reasoning !== 'off') {
-    payload.reasoning = { effort: settings.reasoning };
-  }
-
   let full = '';
+  let attempt = 0;
+  let lastErr = null;
 
   try {
-    const res = await fetch(apiBase() + '/chat/completions', {
-      method: 'POST',
-      signal: abortCtrl.signal,
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + settings.key
-      },
-      body: JSON.stringify(payload)
-    });
+    // ЦИКЛ ПОВТОРОВ: провайдер отбивает запрос недетерминированно —
+    // и «high risk», и пустой ответ проходят со 2–4 раза.
+    while (attempt < RETRY_MAX) {
+      attempt++;
+      setLoading(holder, attempt);
 
-    if (!res.ok) {
-      const errTxt = await res.text();
-      throw new Error(`HTTP ${res.status} — ${errTxt.slice(0, 400)}`);
-    }
+      const payload = buildPayload(nudge, attempt);
+      let res;
 
-    const reader = res.body.getReader();
-    const dec = new TextDecoder();
-    let buf = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-
-      const parts = buf.split('\n\n');
-      buf = parts.pop();
-
-      for (const part of parts) {
-        const line = part.split('\n').find(l => l.startsWith('data:'));
-        if (!line) continue;
-        const data = line.slice(5).trim();
-        if (!data || data === '[DONE]') continue;
-        try {
-          const json = JSON.parse(data);
-          const choice = json.choices && json.choices[0];
-          const d = choice && choice.delta;
-          // содержимое копим молча — на экран попадает только готовый ответ
-          if (d && d.content) {
-            full += d.content;
-          } else if (d && d.reasoning && !full) {
-            // модель «думает» — индикатор и так на экране, ничего не меняем
-          }
-        } catch { /* кусок ещё не собрался — пропускаем */ }
+      try {
+        res = await fetch(apiBase() + '/chat/completions', {
+          method: 'POST',
+          signal: abortCtrl.signal,
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + settings.key
+          },
+          body: JSON.stringify(payload)
+        });
+      } catch (netErr) {
+        if (netErr.name === 'AbortError') throw netErr;
+        lastErr = new Error('сеть: ' + netErr.message);
+        if (attempt < RETRY_MAX) { await wait(700 * attempt); continue; }
+        throw lastErr;
       }
+
+      // ---- отказ провайдера ----
+      if (!res.ok) {
+        const errTxt = await res.text();
+        const retryable = isRetryableStatus(res.status) || isRiskReject(errTxt);
+
+        if (retryable && attempt < RETRY_MAX) {
+          lastErr = new Error('HTTP ' + res.status);
+          // 429 — ждём дольше, провайдер просит притормозить
+          await wait(res.status === 429 ? 2500 * attempt : 800 * attempt);
+          continue;
+        }
+
+        // спецсообщение для отказа по риску — чтобы не пугать «HTTP 400»
+        if (isRiskReject(errTxt)) {
+          throw new Error('провайдер отбил запрос по «риску» (' + RETRY_MAX +
+                          ' попытки подряд). Попробуй: сменить модель, убрать фиксацию провайдера ' +
+                          'или переформулировать последнюю реплику.');
+        }
+        throw new Error(`HTTP ${res.status} — ${errTxt.slice(0, 400)}`);
+      }
+
+      // ---- читаем поток ----
+      full = '';
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+
+        const parts = buf.split('\n\n');
+        buf = parts.pop();
+
+        for (const part of parts) {
+          const line = part.split('\n').find(l => l.startsWith('data:'));
+          if (!line) continue;
+          const data = line.slice(5).trim();
+          if (!data || data === '[DONE]') continue;
+          try {
+            const json = JSON.parse(data);
+            const choice = json.choices && json.choices[0];
+            const d = choice && choice.delta;
+            // содержимое копим молча — на экран попадает только готовый ответ
+            if (d && d.content) full += d.content;
+          } catch { /* кусок ещё не собрался — пропускаем */ }
+        }
+      }
+
+      // ---- проверяем, что пришло что-то осмысленное ----
+      const clean = sanitizeText(full).trim();
+
+      if (!clean) {
+        // пустой ответ — молча повторяем
+        lastErr = new Error('пустой ответ');
+        if (attempt < RETRY_MAX) { await wait(600 * attempt); continue; }
+        throw new Error('модель ' + RETRY_MAX + ' раза вернула пустой ответ. Попробуй другую модель или нажми «Заново».');
+      }
+
+      if (isFlatRefusal(clean) && attempt < RETRY_MAX) {
+        // короткая отписка вместо сцены — тоже повторяем
+        lastErr = new Error('отписка вместо ответа');
+        await wait(600 * attempt);
+        continue;
+      }
+
+      // ---- успех ----
+      full = clean;
+      break;
     }
 
-    if (!full.trim()) full = '(модель вернула пустой ответ)';
-    full = sanitizeText(full);
+    if (!full.trim()) throw new Error(lastErr ? lastErr.message : 'не удалось получить ответ');
+
     list.push({ role: 'assistant', content: full });
     save(LS.chats, chats);
     // перерисовываем: только так у готового ответа появятся кнопки
